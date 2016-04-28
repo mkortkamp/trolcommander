@@ -143,6 +143,7 @@ public class SevenZipArchiveFile extends AbstractROArchiveFile {
         boolean isDirectory = (Boolean)sevenZipFile.getProperty(i, PropID.IS_FOLDER);
         Date time = (Date) sevenZipFile.getProperty(i, PropID.LAST_MODIFICATION_TIME);
         Long size = (Long) sevenZipFile.getProperty(i, PropID.SIZE);
+        path = path.replace(File.separatorChar, ArchiveEntry.SEPARATOR_CHAR);
         ArchiveEntry result = new ArchiveEntry(path, isDirectory,
                 time == null ? 0 : time.getTime(),
                 size == null ? 0 : size, true);
