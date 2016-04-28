@@ -17,6 +17,7 @@
  */
 package com.mucommander.commons.file.impl.sevenzip;
 
+import com.amazonaws.util.StringUtils;
 import com.mucommander.commons.file.*;
 import com.mucommander.commons.util.CircularByteBuffer;
 import net.sf.sevenzipjbinding.*;
@@ -143,10 +144,13 @@ public class SevenZipArchiveFile extends AbstractROArchiveFile {
         boolean isDirectory = (Boolean)sevenZipFile.getProperty(i, PropID.IS_FOLDER);
         Date time = (Date) sevenZipFile.getProperty(i, PropID.LAST_MODIFICATION_TIME);
         Long size = (Long) sevenZipFile.getProperty(i, PropID.SIZE);
+        if (org.apache.commons.lang.StringUtils.isEmpty(path)) {
+            path = file.getNameWithoutExtension();
+        }
         path = path.replace(File.separatorChar, ArchiveEntry.SEPARATOR_CHAR);
         ArchiveEntry result = new ArchiveEntry(path, isDirectory,
-                time == null ? 0 : time.getTime(),
-                size == null ? 0 : size, true);
+                time == null ? -1 : time.getTime(),
+                size == null ? -1 : size, true);
         result.setEntryObject(i);
         return result;
     }
