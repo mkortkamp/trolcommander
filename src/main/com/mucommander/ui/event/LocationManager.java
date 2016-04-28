@@ -78,6 +78,7 @@ public class LocationManager {
 		try {
 			children = folder.ls(configurableFolderFilter);
 		} catch (Exception e) {
+            e.printStackTrace();
 			LOGGER.debug("Couldn't ls children of " + folder.getAbsolutePath() + ", error: " + e.getMessage());
 			children = new AbstractFile[0];
 		}

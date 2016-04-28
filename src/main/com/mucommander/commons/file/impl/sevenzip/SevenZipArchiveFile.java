@@ -35,23 +35,34 @@ public class SevenZipArchiveFile extends AbstractROArchiveFile {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(SevenZipArchiveFile.class);
 
-    private ISevenZipInArchive inArchive;
+    private IInArchive inArchive;
     private ArchiveOpenVolumeCallback archiveOpenVolumeCallback;
+    private ArchiveFormat sevenZipJBindingFormat;
+
+    private final byte[] formatSignature;
 
     /**
      * Creates an AbstractROArchiveFile on top of the given file.
      *
      * @param file the file on top of which to create the archive
+     * @param any {@link ArchiveFormat} with extraction support
+     *
+     * @see <a href="http://sevenzipjbind.sourceforge.net/javadoc/net/sf/sevenzipjbinding/ArchiveFormat.html">
+     *      ArchiveFormat</a>
      */
-    protected SevenZipArchiveFile(AbstractFile file) {
+    public SevenZipArchiveFile(AbstractFile file, ArchiveFormat sevenZipJBindingFormat, byte[] formatSignature) {
         super(file);
+        this.sevenZipJBindingFormat = sevenZipJBindingFormat;
+        this.formatSignature = formatSignature;
+
     }
 
-    private ISevenZipInArchive openSevenZipFile() throws IOException, SevenZipException {
+
+    private IInArchive openSevenZipFile() throws IOException, SevenZipException {
         if (inArchive == null) {
             archiveOpenVolumeCallback = new ArchiveOpenVolumeCallback();
-            SevenZipRandomAccessFile in = new SevenZipRandomAccessFile(file);
-            inArchive = SevenZip.openInArchive(ArchiveFormat.SEVEN_ZIP, in);
+            SignatureCheckedRandomAccessFile in = new SignatureCheckedRandomAccessFile(file, formatSignature);
+            inArchive = SevenZip.openInArchive(sevenZipJBindingFormat, in);
             //new VolumedArchiveInStream(in, archiveOpenVolumeCallback));
         }
         return inArchive;
@@ -61,7 +72,7 @@ public class SevenZipArchiveFile extends AbstractROArchiveFile {
     @Override
     public ArchiveEntryIterator getEntryIterator() throws IOException, UnsupportedFileOperationException {
         try {
-            final ISevenZipInArchive sevenZipFile = openSevenZipFile();
+            final IInArchive sevenZipFile = openSevenZipFile();
             int nbEntries = sevenZipFile.getNumberOfItems();
             List<ArchiveEntry> entries = new ArrayList<>();
             for (int i = 0; i < nbEntries; i++) {
@@ -92,9 +103,9 @@ public class SevenZipArchiveFile extends AbstractROArchiveFile {
             @Override
             public void run() {
                 try {
-                    final ISevenZipInArchive sevenZipFile = openSevenZipFile();
+                    final IInArchive sevenZipFile = openSevenZipFile();
                     sevenZipFile.extract(in, false, new ExtractCallback(inArchive, cbb.getOutputStream()));
-                } catch (SevenZipException | IOException e) {
+                } catch (IOException e) {
                     e.printStackTrace();
                 } finally {
                     if (inArchive != null) {
@@ -127,12 +138,14 @@ public class SevenZipArchiveFile extends AbstractROArchiveFile {
      * @return an ArchiveEntry whose attributes are fetched from the given SevenZipEntry
      */
     private ArchiveEntry createArchiveEntry(int i) throws IOException, SevenZipException {
-        final ISevenZipInArchive sevenZipFile = openSevenZipFile();
+        final IInArchive sevenZipFile = openSevenZipFile();
         String path = sevenZipFile.getStringProperty(i, PropID.PATH);
         boolean isDirectory = (Boolean)sevenZipFile.getProperty(i, PropID.IS_FOLDER);
-        Date time = (Date)sevenZipFile.getProperty(i, PropID.LAST_WRITE_TIME);
-        long size = (Long)sevenZipFile.getProperty(i, PropID.SIZE);
-        ArchiveEntry result = new ArchiveEntry(path, isDirectory, time.getTime(), size, true);
+        Date time = (Date) sevenZipFile.getProperty(i, PropID.LAST_MODIFICATION_TIME);
+        Long size = (Long) sevenZipFile.getProperty(i, PropID.SIZE);
+        ArchiveEntry result = new ArchiveEntry(path, isDirectory,
+                time == null ? 0 : time.getTime(),
+                size == null ? 0 : size, true);
         result.setEntryObject(i);
         return result;
     }
@@ -217,10 +230,10 @@ public class SevenZipArchiveFile extends AbstractROArchiveFile {
         private long size = 0;
         private int index;
         private boolean skipExtraction;
-        private ISevenZipInArchive inArchive;
+        private IInArchive inArchive;
         private OutputStream os;
 
-        public ExtractCallback(ISevenZipInArchive inArchive, OutputStream os) {
+        public ExtractCallback(IInArchive inArchive, OutputStream os) {
             this.inArchive = inArchive;
             this.os = os;
         }
