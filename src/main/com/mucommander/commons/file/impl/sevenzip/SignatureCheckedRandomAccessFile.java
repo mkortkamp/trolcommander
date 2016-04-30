@@ -159,7 +159,7 @@ public class SignatureCheckedRandomAccessFile implements IInStream, ISequentialI
 
         InputStream iStream;
 
-        int read;
+        int read = 0;
         if (file.isFileOperationSupported(FileOperation.RANDOM_READ_FILE)) {
             RandomAccessInputStream raiStream = file.getRandomAccessInputStream();
             raiStream.seek(0);
@@ -167,14 +167,19 @@ public class SignatureCheckedRandomAccessFile implements IInStream, ISequentialI
             raiStream.seek(0);
             iStream = raiStream;
         } else {
-            PushbackInputStream pushbackInputStream = file.getPushBackInputStream(buf.length);
-            iStream = pushbackInputStream;
-            read = StreamUtils.readUpTo(pushbackInputStream, buf);
-            // TODO sometimes reading from pushbackInputStream returns 0
-            if (read <= 0 && file.getSize() > 0) {
+            PushbackInputStream pushbackInputStream = null;
+            try {
+                pushbackInputStream = file.getPushBackInputStream(buf.length);
+                iStream = pushbackInputStream;
+                read = StreamUtils.readUpTo(pushbackInputStream, buf);
+                // TODO sometimes reading from pushbackInputStream returns 0
+                if (read <= 0 && file.getSize() > 0) {
+                    return file.getInputStream();
+                }
+                pushbackInputStream.unread(buf, 0, read);
+            } catch (IllegalArgumentException e) {
                 return file.getInputStream();
             }
-            pushbackInputStream.unread(buf, 0, read);
         }
 
         if (!checkSignature(buf)) {
