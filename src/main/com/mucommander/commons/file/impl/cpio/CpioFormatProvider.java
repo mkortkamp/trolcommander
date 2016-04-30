@@ -14,7 +14,9 @@ public class CpioFormatProvider implements ArchiveFormatProvider {
     private final static ExtensionFilenameFilter FILENAME_FILTER = new ExtensionFilenameFilter(
             new String[] { ".cpio" });
 
-    private final static byte[] SIGNATURE = { 0x30, 0x37, 0x30, 0x37, 0x30 };
+//    private final static byte[] SIGNATURE = { 0x30, 0x37, 0x30, 0x37, 0x30 }; //=google but sevenzipjbinding:C771050823
+    private final static byte[] SIGNATURE = { }; 
+    
 
     @Override
     public AbstractArchiveFile getFile(AbstractFile file) throws IOException {

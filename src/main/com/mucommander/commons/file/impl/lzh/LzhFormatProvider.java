@@ -14,7 +14,8 @@ public class LzhFormatProvider implements ArchiveFormatProvider {
     private final static ExtensionFilenameFilter FILENAME_FILTER = new ExtensionFilenameFilter(
             new String[] { ".lzh", ".lha" });
 
-    private final static byte[] SIGNATURE = { 0x2D, 0x6C, 0x68 };
+//    private final static byte[] SIGNATURE = { 0x2D, 0x6C, 0x68 };//=google but sevenzipjbinding examples 24FB2D
+    private final static byte[] SIGNATURE = {  };
 
     @Override
     public AbstractArchiveFile getFile(AbstractFile file) throws IOException {
