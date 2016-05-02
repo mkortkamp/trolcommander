@@ -44,6 +44,12 @@ import com.mucommander.ui.main.MainFrame;
 public class ArchiveJob extends TransferFileJob {
 	private static final Logger LOGGER = LoggerFactory.getLogger(ArchiveJob.class);
 	
+    public static TransferFileJob createArchiveJob(ProgressDialog progressDialog, MainFrame mainFrame, FileSet files,
+            AbstractFile destFile, int archiveFormat, String archiveComment) {
+        return new ArchiveJob(progressDialog, mainFrame, files, destFile, archiveFormat, archiveComment);
+    }
+
+
     /** Destination archive file */
     private AbstractFile destFile;
 
@@ -69,7 +75,7 @@ public class ArchiveJob extends TransferFileJob {
 
 
 
-    public ArchiveJob(ProgressDialog progressDialog, MainFrame mainFrame, FileSet files, AbstractFile destFile, int archiveFormat, String archiveComment) {
+    private ArchiveJob(ProgressDialog progressDialog, MainFrame mainFrame, FileSet files, AbstractFile destFile, int archiveFormat, String archiveComment) {
         super(progressDialog, mainFrame, files);
 		
         this.destFile = destFile;

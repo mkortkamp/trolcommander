@@ -140,7 +140,7 @@ public class PackDialog extends TransferDestinationDialog implements ItemListene
         // Remember last format used, for next time this dialog is invoked
         lastFormat = formats[formatsComboBox.getSelectedIndex()];
 
-        return new ArchiveJob(progressDialog, mainFrame, files, resolvedDest.getDestinationFile(), lastFormat, Archiver.formatSupportsComment(lastFormat)?commentArea.getText():null);
+        return ArchiveJob.createArchiveJob(progressDialog, mainFrame, files, resolvedDest.getDestinationFile(), lastFormat, Archiver.formatSupportsComment(lastFormat)?commentArea.getText():null);
     }
 
     @Override
