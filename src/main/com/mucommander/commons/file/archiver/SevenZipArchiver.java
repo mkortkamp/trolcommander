@@ -1,5 +1,7 @@
 package com.mucommander.commons.file.archiver;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.OutputStream;
@@ -157,27 +159,14 @@ public class SevenZipArchiver extends Archiver {
                                     .getEntryContentWriter();
                             if (entryContentWriter != null) {
 
-                                PipedOutputStream pipedOutputStream = new PipedOutputStream();
+                                ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
                                 try {
-                                    final InputStreamSequentialInStream inStream = new InputStreamSequentialInStream(
-                                            new PipedInputStream(pipedOutputStream));
-                                    executor.submit(() -> {
-                                        try {
-                                            entryContentWriter.accept(pipedOutputStream);
-                                        } catch (IOException e) {
-                                            e.printStackTrace();
-                                        } finally {
-                                            try {
-                                                pipedOutputStream.close();
-                                            } catch (IOException e) {
-                                                e.printStackTrace();
-                                            }
-                                        }
-                                    });
-                                    return inStream;
-                                } catch (IOException e) {
-                                    throw new SevenZipException(e);
+                                    entryContentWriter.accept(byteArrayOutputStream);
+                                } catch (IOException e1) {
+                                    throw new SevenZipException(e1);
                                 }
+                                return new InputStreamSequentialInStream(
+                                        new ByteArrayInputStream(byteArrayOutputStream.toByteArray()));
                             }
                             return null;
                         }
