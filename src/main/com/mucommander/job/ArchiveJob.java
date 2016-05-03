@@ -152,8 +152,8 @@ public class ArchiveJob extends TransferFileJob {
                     }
                     return;
                 } else {
-                    InputStream in = setCurrentInputStream(file.getInputStream());
                     archiver.createEntryAsync(entryRelativePath, file, beforeProcessing, outputStreaam -> {
+                        InputStream in = setCurrentInputStream(file.getInputStream());
                         // Synchronize this block to ensure that Archiver.close() is not closed while data is still
                         // being
                         // written to the archive OutputStream, this would cause ZipOutputStream to deadlock.

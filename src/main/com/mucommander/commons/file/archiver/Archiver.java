@@ -67,6 +67,8 @@ public abstract class Archiver {
     public final static int TAR_BZ2_FORMAT = 5;
     /** ISO archive format (many entries format) */
     public final static int ISO_FORMAT = 6;
+    /** 7z archive format (many entries format) */
+    public final static int SEVENZ_FORMAT = 7;
 
     /** Boolean array describing for each format if it can store more than one entry */
     private final static boolean SUPPORTS_MANY_ENTRIES[] = {
@@ -76,10 +78,11 @@ public abstract class Archiver {
         true,
         true,
         true,
+        true,
         true
     };
     
-    /** Boolean array describing for each format if it can store more than one entry */
+    /** TODO what is SUPPORTS_FILE_STREAMING */
     public final static boolean SUPPORTS_FILE_STREAMING[] = {
         true,
         true,
@@ -87,6 +90,7 @@ public abstract class Archiver {
         true,
         true,
         true,
+        false,
         false
     };
     /** Array of single entry formats: many entries formats are considered to be single entry formats as well */
@@ -97,7 +101,8 @@ public abstract class Archiver {
         TAR_FORMAT,
         TAR_GZ_FORMAT,
         TAR_BZ2_FORMAT,
-        ISO_FORMAT
+        ISO_FORMAT,
+        SEVENZ_FORMAT
     };
 
     /** Array of many entries formats */
@@ -106,7 +111,8 @@ public abstract class Archiver {
         TAR_FORMAT,
         TAR_GZ_FORMAT,
         TAR_BZ2_FORMAT,
-        ISO_FORMAT
+        ISO_FORMAT,
+        SEVENZ_FORMAT
     };
     
     /** Array of format names */
@@ -117,7 +123,8 @@ public abstract class Archiver {
         "Tar",
         "Tar/Gzip",
         "Tar/Bzip2",
-        "ISO"
+        "ISO",
+        "7z"
     };
 
     /** Array of format extensions */
@@ -128,7 +135,8 @@ public abstract class Archiver {
         "tar",
         "tar.gz",
         "tar.bz2",
-        "iso"
+        "iso",
+        "7z"
     };
     
 
@@ -328,7 +336,9 @@ public abstract class Archiver {
                 break;
             case ISO_FORMAT:
                 throw new IllegalStateException("ISO archiving not supported by stream");
-
+            case SEVENZ_FORMAT:
+                archiver = new SevenZipArchiver(out);
+                break;
             default:
                 return null;
         }

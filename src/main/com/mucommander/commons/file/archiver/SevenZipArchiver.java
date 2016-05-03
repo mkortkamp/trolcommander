@@ -39,6 +39,8 @@ public class SevenZipArchiver extends Archiver {
     @Override
     public void startAsyncEntriesCreation() throws IOException {
         try {
+            outArchive7z.setLevel(9);
+            outArchive7z.setTrace(true);
             outArchive7z.createArchive(new ISequentialOutStream() {
 
                 @Override
