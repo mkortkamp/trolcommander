@@ -207,15 +207,16 @@ public class SevenZipArchiver extends Archiver {
 
     @Override
     public void postProcess() throws IOException {
-        if (tempFile != null) {
-            StreamUtils.copyStream(new FileInputStream(tempFile.toFile()), sequentialOut);
-            tempFile.toFile().delete();
-        }
+        // nowhere used
     }
 
     @Override
     public void close() throws IOException {
-
+        out.close();
+        if (tempFile != null) {
+            StreamUtils.copyStream(new FileInputStream(tempFile.toFile()), sequentialOut);
+            tempFile.toFile().delete();
+        }
     }
 
 }
