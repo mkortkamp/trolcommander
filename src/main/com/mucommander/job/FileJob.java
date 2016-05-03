@@ -850,28 +850,29 @@ public abstract class FileJob implements Runnable {
                                 activeTable.setFileMarked(currentFile, false, false);
                             }
 
-                            // If last file was reached without any user interruption, all files have been processed
-                            // with or
-                            // without errors, switch to FINISHED state and notify listeners
-                            if (isLastFile) {
-                                currentFileIndex++;
-                                stop();
-                                jobCompleted();
-                                setState(State.FINISHED);
-                            }
                         }
-                        if (isLastFile) {
-                            // Refresh tables's current folders, based on the job's refresh policy.
-                            refreshTables();
-                        }
+
                     });
             // *************** no more code after this line (async operation above!)
         }
         try {
             startAsyncFileProcessing();
+            if (getState() != State.INTERRUPTED) {
+
+                // If last file was reached without any user interruption, all files have been processed
+                // with or
+                // without errors, switch to FINISHED state and notify listeners
+                currentFileIndex++;
+                stop();
+                jobCompleted();
+                setState(State.FINISHED);
+            }
         } catch (IOException e) {
             // TODO Auto-generated catch block
             e.printStackTrace();
+        } finally {
+            // Refresh tables's current folders, based on the job's refresh policy.
+            refreshTables();
         }
     }
 
