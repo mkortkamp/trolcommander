@@ -21,13 +21,16 @@ package com.mucommander.job;
 
 import java.io.IOException;
 import java.io.InputStream;
-
+import java.io.OutputStream;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Consumer;
 import com.mucommander.job.utils.ScanDirectoryThread;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.mucommander.commons.file.AbstractFile;
 import com.mucommander.commons.file.archiver.Archiver;
+import com.mucommander.commons.file.archiver.CreateEntryAsyncParameter;
 import com.mucommander.commons.file.util.FileSet;
 import com.mucommander.commons.io.StreamUtils;
 import com.mucommander.text.Translator;
@@ -95,8 +98,20 @@ public class ArchiveJob extends TransferFileJob {
 
     @Override
     protected boolean processFile(AbstractFile file, Object recurseParams) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    protected void startAsyncFileProcessing() throws IOException {
+        archiver.startAsyncEntriesCreation();
+    }
+
+    @Override
+    protected void processFileAsync(AbstractFile file, Object recurseParams, Runnable beforeProcessing,
+            Consumer<Boolean> onProcessingDone) {
         if (getState() == State.INTERRUPTED) {
-            return false;
+            onProcessingDone.accept(false);
+            return;
         }
 
         String filePath = file.getAbsolutePath(false);
@@ -107,40 +122,61 @@ public class ArchiveJob extends TransferFileJob {
             try {
                 if (file.isDirectory() && !file.isSymlink()) {
                     // create new directory entry in archive file
-                    archiver.createEntry(entryRelativePath, file);
+                    archiver.createEntryAsync(entryRelativePath, file, beforeProcessing, null);
 
                     // Recurse on files
                     AbstractFile subFiles[] = file.ls();
-                    boolean folderComplete = true;
-                    for (int i=0; i<subFiles.length && getState() != State.INTERRUPTED; i++) {
-                        // Notify job that we're starting to process this file (needed for recursive calls to processFile)
-                        nextFile(subFiles[i]);
-                        if (!processFile(subFiles[i], null)) {
-                            folderComplete = false;
+                    final AtomicBoolean folderComplete = new AtomicBoolean(true);
+                    for (int i = 0; i < subFiles.length; i++) {
+                        final boolean lastSubFile = i == subFiles.length - 1;
+                        final int subFileIndex = i;
+                        processFileAsync(subFiles[i], null,
+                                () -> {
+                                    // Notify job that we're starting to process this file (needed for recursive calls
+                                    // to processFile)
+                                    nextFile(subFiles[subFileIndex]);
+                                },
+                                success -> {
+                                    folderComplete.compareAndSet(true, success);
+                                    if (lastSubFile) {
+                                        onProcessingDone.accept(folderComplete.get());
+                                    }
+                                });
+                        if (getState() == State.INTERRUPTED) {
+                            if (!lastSubFile) {
+                                onProcessingDone.accept(false); // it used to return true but shouldn'''t it be false
+                                                                // if folder isn't completed due to interruption
+                            }
+                            break;
                         }
                     }
-					
-                    return folderComplete;
+                    return;
                 } else {
                     InputStream in = setCurrentInputStream(file.getInputStream());
-                    // Synchronize this block to ensure that Archiver.close() is not closed while data is still being
-                    // written to the archive OutputStream, this would cause ZipOutputStream to deadlock.
-                    synchronized(ioLock) {
-                        // create a new file entry in archive and copy the current file
-                        StreamUtils.copyStream(in, archiver.createEntry(entryRelativePath, file));
-                        in.close();
-                    }
-                    return true;
+                    archiver.createEntryAsync(entryRelativePath, file, beforeProcessing, outputStreaam -> {
+                        // Synchronize this block to ensure that Archiver.close() is not closed while data is still
+                        // being
+                        // written to the archive OutputStream, this would cause ZipOutputStream to deadlock.
+                        synchronized (ioLock) {
+                            StreamUtils.copyStream(in, outputStreaam);
+                            in.close();
+                        }
+                        onProcessingDone.accept(true);
+                    });
+                    return;
                 }
             } catch (Exception e) {  // Catch Exception rather than IOException as ZipOutputStream has been seen throwing NullPointerException
                 // If job was interrupted by the user at the time when the exception occurred,
                 // it most likely means that the exception was caused by user cancellation.
                 // In this case, the exception should not be interpreted as an error.
-                if (getState() == State.INTERRUPTED)
-                    return false;
+                if (getState() == State.INTERRUPTED) {
+                    onProcessingDone.accept(false);
+                    return;
+                }
 
                 LOGGER.debug("Caught IOException", e);
                 
+                // FIXME retry is still in synchronious part but probably should be in asynchronious parts above
                 int ret = showErrorDialog(Translator.get("pack_dialog.error_title"), Translator.get("error_while_transferring", file.getAbsolutePath()));
                 // Retry loops
                 if (ret == RETRY_ACTION) {
@@ -150,7 +186,8 @@ public class ArchiveJob extends TransferFileJob {
                     continue;
                 }
                 // Cancel, skip or close dialog return false
-                return false;
+                onProcessingDone.accept(false);
+                return;
             }
         } while(true);
     }

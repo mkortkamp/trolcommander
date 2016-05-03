@@ -24,6 +24,7 @@ import com.mucommander.commons.file.FileOperation;
 import com.mucommander.commons.file.UnsupportedFileOperationException;
 import com.mucommander.commons.io.BufferedRandomOutputStream;
 import com.mucommander.commons.io.RandomAccessOutputStream;
+import com.mucommander.utils.ThrowingConsumer;
 import org.apache.hadoop.io.compress.bzip2.CBZip2OutputStream;
 
 import java.io.BufferedOutputStream;
@@ -77,7 +78,7 @@ public abstract class Archiver {
         true,
         true
     };
-	
+    
     /** Boolean array describing for each format if it can store more than one entry */
     public final static boolean SUPPORTS_FILE_STREAMING[] = {
         true,
@@ -107,7 +108,7 @@ public abstract class Archiver {
         TAR_BZ2_FORMAT,
         ISO_FORMAT
     };
-	
+    
     /** Array of format names */
     private final static String FORMAT_NAMES[] = {
         "Zip",
@@ -129,7 +130,7 @@ public abstract class Archiver {
         "tar.bz2",
         "iso"
     };
-	
+    
 
     /** The underlying stream this archiver is writing to */
     protected OutputStream out;
@@ -139,7 +140,7 @@ public abstract class Archiver {
     protected String formatName;
     /** Support output stream for archiving files */
     protected boolean supporStream;
-	
+    
     /**
      * Creates a new Archiver.
      *
@@ -166,15 +167,15 @@ public abstract class Archiver {
     public int getFormat() {
         return this.format;
     }
-	
+    
     /**
      * Sets the archiver format used by this Archiver, for internal use only.
      */
     private void setFormat(int format) {
         this.format = format;
     }
-	
-	
+    
+    
     /**
      * @return the name of the archive format used by this Archiver.
      */
@@ -182,7 +183,7 @@ public abstract class Archiver {
         return FORMAT_NAMES[this.format];
     }
 
-	
+    
     /**
      * Checks if the format used by this Archiver can store more than one entry.
      * @return true if the format used by this Archiver can store more than one entry.
@@ -229,18 +230,18 @@ public abstract class Archiver {
      * </ul>
      *
      * @param entryPath
-	  * @param isDirectory
-	  *
-	  * @return normalized path
+      * @param isDirectory
+      *
+      * @return normalized path
      */
     protected String normalizePath(String entryPath, boolean isDirectory) {
         // Replace any \ character by /
         entryPath = entryPath.replace('\\', '/');
-		
+        
         // If entry is a directory, make sure the path contains a trailing / 
         if (isDirectory && !entryPath.endsWith("/"))
             entryPath += "/";
-		
+        
         return entryPath;
     }
 
@@ -331,7 +332,7 @@ public abstract class Archiver {
             default:
                 return null;
         }
-		
+        
         archiver.setFormat(format);
 
         return archiver;
@@ -367,7 +368,7 @@ public abstract class Archiver {
         return manyEntries? MANY_ENTRIES_FORMATS : SINGLE_ENTRY_FORMATS;
     }
 
-	
+    
     /**
      * Returns the name of the given archive format. The returned name can be used for display in a GUI.
      *
@@ -377,18 +378,18 @@ public abstract class Archiver {
         return FORMAT_NAMES[format];
     }
 
-	
+    
     /**
      * Returns the default archive format extension. Note: some formats such as Tar/Gzip have several common
      * extensions (e.g. tar.gz or tgz), the most common one will be returned.
      *
-     * @param format an archive format	 
+     * @param format an archive format   
      */
     public static String getFormatExtension(int format) {
         return FORMAT_EXTENSIONS[format];
     }
-	
-	
+    
+    
     /**
      * Returns true if the specified archive format supports storage of more than one entry.
      *
@@ -397,45 +398,78 @@ public abstract class Archiver {
     public static boolean formatSupportsManyFiles(int format) {
         return SUPPORTS_MANY_ENTRIES[format];
     }
-	
-	
+    
+    
     /**
      * Returns true if the specified archive format can store an optional comment.
      *
-     * @param format an archive format	 
+     * @param format an archive format   
      */
     public static boolean formatSupportsComment(int format) {
         return format == ZIP_FORMAT;
     }
-	
-	
+    
+    
     //////////////////////
     // Abstract methods //
     //////////////////////
+
+    /**
+     * Starts actual creation of entries previously scheduled with
+     * {@link #createEntryAsync(String, FileAttributes, Runnable, ThrowingConsumer)}.
+     * 
+     * @throws IOException
+     */
+    public void startAsyncEntriesCreation() throws IOException {
+        // default implementation is synchronious - so nothing to to here
+    }
+
+    /**
+     * Asynchronious version of {@link #createEntry(String, FileAttributes)} - see there for details.
+     * 
+     * @param beforeProcessing
+     */
+    public void createEntryAsync(String entryPath, FileAttributes attributes,
+            Runnable beforeProcessing, ThrowingConsumer<OutputStream, IOException> entryContentWriter)
+            throws IOException {
+
+        if (beforeProcessing != null) {
+            beforeProcessing.run();
+        }
+
+        final OutputStream oStream = createEntry(entryPath, attributes);
+
+        if (entryContentWriter != null) {
+            entryContentWriter.accept(oStream);
+        }
+    }
 
     /**
      * Creates a new entry in the archive using the given relative path and file attributes, and returns an
      * <code>OutputStream</code> to write the entry's contents. The specified file attributes are used to determine
      * whether the entry is a directory or a regular file, and to set the entry's size, permissions and date.
      * 
-     * <p>If the entry is a regular file (not a directory), an OutputStream which can be used to write the contents
-     * of the entry will be returned, <code>null</code> otherwise. The OutputStream <b>must not</b> be closed once
-     * it has been used (Archiver takes care of this), only the {@link #close() close} method has to be called when
-     * all entries have been created.</p>
+     * <p>
+     * If the entry is a regular file (not a directory), an OutputStream which can be used to write the contents of the
+     * entry will be returned, <code>null</code> otherwise. The OutputStream <b>must not</b> be closed once it has been
+     * used (Archiver takes care of this), only the {@link #close() close} method has to be called when all entries have
+     * been created.
+     * </p>
      *
-     * <p>If this Archiver uses a single entry format, the specified path and file won't be used at all.
-     * Also in this case, this method must be invoked only once (single entry), it will throw an IOException
-     * if invoked more than once.</p>
+     * <p>
+     * If this Archiver uses a single entry format, the specified path and file won't be used at all. Also in this case,
+     * this method must be invoked only once (single entry), it will throw an IOException if invoked more than once.
+     * </p>
      *
      * @param entryPath the path to be used to create the entry in the archive. This parameter is simply ignored if the
-     * archive is a single entry format.
-     * @param attributes used to determine whether the entry is a directory or regular file, and to retrieve its
-     * date and size
+     *            archive is a single entry format.
+     * @param attributes used to determine whether the entry is a directory or regular file, and to retrieve its date
+     *            and size
      * @return <code>OutputStream</code> to write the entry's contents.
      * @throws IOException if this Archiver failed to write the entry, or in the case of a single entry archiver, if
-     * this method was called more than once.
+     *             this method was called more than once.
      */
-    public abstract OutputStream createEntry(String entryPath, FileAttributes attributes) throws IOException;
+    protected abstract OutputStream createEntry(String entryPath, FileAttributes attributes) throws IOException;
 
 
     /**

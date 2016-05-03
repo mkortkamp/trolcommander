@@ -19,8 +19,9 @@
 
 package com.mucommander.job;
 
+import java.io.IOException;
 import java.util.WeakHashMap;
-
+import java.util.function.Consumer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -828,40 +829,76 @@ public abstract class FileJob implements Runnable {
 
         // Loop on all source files, checking that job has not been interrupted
         for(int i = 0; i < nbFiles; i++) {
+            final boolean isLastFile = i == nbFiles - 1;
+            final int fileIndex = i;
             AbstractFile currentFile = files.elementAt(i);
 
-            // Change current file and advance file index
-            currentFileIndex = i;
-            nextFile(currentFile);
-
             // Process current file
-            boolean success = processFile(currentFile, null);
+            processFileAsync(currentFile, null,
+                    () -> { // before processing
+                        // Change current file and advance file index
+                        currentFileIndex = fileIndex;
+                        nextFile(currentFile);
+                    },
+                    success -> {// after processing
+                        if (getState() != State.INTERRUPTED) {
 
-            // Stop if job was interrupted
-            if (getState() == State.INTERRUPTED)
-                break;
+                            // Unmark file in active table if 'auto unmark' is enabled
+                            // and file was processed successfully
+                            if (autoUnmark && success) {
+                                // Do not repaint rows individually as it would be too expensive
+                                activeTable.setFileMarked(currentFile, false, false);
+                            }
 
-            // Unmark file in active table if 'auto unmark' is enabled
-            // and file was processed successfully
-            if (autoUnmark && success) {
-                // Do not repaint rows individually as it would be too expensive
-                activeTable.setFileMarked(currentFile, false, false);
-            }
-
-            // If last file was reached without any user interruption, all files have been processed with or
-            // without errors, switch to FINISHED state and notify listeners
-            if (i == nbFiles-1) {
-                currentFileIndex++;
-                stop();
-                jobCompleted();
-                setState(State.FINISHED);
-            }
+                            // If last file was reached without any user interruption, all files have been processed
+                            // with or
+                            // without errors, switch to FINISHED state and notify listeners
+                            if (isLastFile) {
+                                currentFileIndex++;
+                                stop();
+                                jobCompleted();
+                                setState(State.FINISHED);
+                            }
+                        }
+                        if (isLastFile) {
+                            // Refresh tables's current folders, based on the job's refresh policy.
+                            refreshTables();
+                        }
+                    });
+            // *************** no more code after this line (async operation above!)
         }
-
-        // Refresh tables's current folders, based on the job's refresh policy.
-        refreshTables();
+        try {
+            startAsyncFileProcessing();
+        } catch (IOException e) {
+            // TODO Auto-generated catch block
+            e.printStackTrace();
+        }
     }
 
+    /**
+     * Asynchronious version of {@link #processFile(AbstractFile, Object)} - see there for details.
+     * <code>onProcessingDone</code>> must be called when all processing has actually completed.
+     */
+    protected void processFileAsync(AbstractFile file, Object recurseParams, Runnable beforeProcessing,
+            Consumer<Boolean> onProcessingDone) {
+        if (beforeProcessing != null) {
+            beforeProcessing.run();
+        }
+        boolean success = processFile(file, recurseParams);
+        if (onProcessingDone != null) {
+            onProcessingDone.accept(success);
+        }
+    }
+
+    /**
+     * Actially starts processing files previously scheduled with
+     * {@link #processFileAsync(AbstractFile, Object, Runnable, Consumer)}
+     * 
+     * @throws IOException
+     */
+    protected void startAsyncFileProcessing() throws IOException {
+        // default implementation is synchronious - so nothing to here
+    }
 
     //////////////////////
     // Abstract methods //
@@ -879,10 +916,13 @@ public abstract class FileJob implements Runnable {
 	
 	
     /**
-     * Automatically called by {@link #run()} for each file that needs to be processed.
+     * Automatically called by {@link #run()} for each file that needs to be processed. Actually <code>run()</code>
+     * calls the asynchronious version of this method. The default asynchronious implementation simply calls this
+     * synchronious version.
      *
      * @param file the file or folder to process
-     * @param recurseParams array of parameters which can be used when calling this method recursively, contains <code>null</code> when called by {@link #run()}
+     * @param recurseParams array of parameters which can be used when calling this method recursively, contains
+     *            <code>null</code> when called by {@link #run()}
      *
      * @return <code>true</code> if the operation was successful
      */
