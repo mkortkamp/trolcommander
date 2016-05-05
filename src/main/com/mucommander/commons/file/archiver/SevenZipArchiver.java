@@ -1,5 +1,6 @@
 package com.mucommander.commons.file.archiver;
 
+import java.io.BufferedInputStream;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -17,6 +18,7 @@ import java.util.function.Consumer;
 import java.util.function.Supplier;
 import com.mucommander.commons.file.FileAttributes;
 import com.mucommander.commons.file.impl.local.LocalFile;
+import com.mucommander.commons.io.BufferedRandomOutputStream;
 import com.mucommander.commons.io.RandomAccessOutputStream;
 import com.mucommander.commons.io.StreamUtils;
 import com.mucommander.utils.ThrowingSupplier;
@@ -53,13 +55,15 @@ public class SevenZipArchiver extends Archiver {
     }
 
     private RandomAccessOutputStream wrapSequentialOutputStream(OutputStream outStream) throws IOException {
-        if (outStream instanceof RandomAccessOutputStream) {
+        if (outStream instanceof BufferedRandomOutputStream) {
             return (RandomAccessOutputStream) outStream;
+        } else if (outStream instanceof RandomAccessOutputStream) {
+            return new BufferedRandomOutputStream((RandomAccessOutputStream) outStream);
         } else {
             tempFile = Files.createTempFile("trolCommander-packer", "7z");
             tempFile.toFile().deleteOnExit();
             sequentialOut = outStream;
-            return new LocalFile.LocalRandomAccessOutputStream(FileChannel.open(tempFile));
+            return new BufferedRandomOutputStream(new LocalFile.LocalRandomAccessOutputStream(FileChannel.open(tempFile)));
         }
     }
 
@@ -67,7 +71,9 @@ public class SevenZipArchiver extends Archiver {
     public Optional<Supplier<Float>> startAsyncEntriesCreation() throws IOException {
         try {
             outArchive7z.setLevel(9);
-            outArchive7z.setTrace(true);
+            outArchive7z.setSolid(true);
+            outArchive7z.setTrace(false);
+            outArchive7z.setThreadCount(6);
             outArchive7z.createArchive(new IOutStream() {
 
                 @Override
@@ -123,16 +129,16 @@ public class SevenZipArchiver extends Archiver {
 
                         @Override
                         public void setCompleted(long complete) throws SevenZipException {
-                            synchronized (progressLock) {
-                                completedWork = complete;
-                            }
+//                            synchronized (progressLock) {
+//                                completedWork = complete;
+//                            }
                         }
 
                         @Override
                         public void setTotal(long total) throws SevenZipException {
-                            synchronized (progressLock) {
-                                totalWork = total;
-                            }
+//                            synchronized (progressLock) {
+//                                totalWork = total;
+//                            }
                         }
 
                         @Override
@@ -171,7 +177,7 @@ public class SevenZipArchiver extends Archiver {
                                     throw new SevenZipException(e);
                                 }
                                 if (inputStream != null) {
-                                    return new InputStreamSequentialInStream(inputStream);
+                                    return new InputStreamSequentialInStream(new BufferedInputStream(inputStream));
                                 }
                             }
                             return null;
