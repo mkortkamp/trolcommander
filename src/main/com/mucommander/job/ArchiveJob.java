@@ -20,22 +20,16 @@
 package com.mucommander.job;
 
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
 import java.util.Optional;
-import java.util.concurrent.Callable;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
-import com.mucommander.job.utils.ScanDirectoryThread;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
 import com.mucommander.commons.file.AbstractFile;
 import com.mucommander.commons.file.archiver.Archiver;
-import com.mucommander.commons.file.archiver.CreateEntryAsyncParameter;
 import com.mucommander.commons.file.util.FileSet;
-import com.mucommander.commons.io.StreamUtils;
+import com.mucommander.job.utils.ScanDirectoryThread;
 import com.mucommander.text.Translator;
 import com.mucommander.ui.dialog.file.FileCollisionDialog;
 import com.mucommander.ui.dialog.file.ProgressDialog;
@@ -110,6 +104,7 @@ public class ArchiveJob extends TransferFileJob {
         } catch (IOException e) {
             LOGGER.debug("failed archiving files(s)", e);
             if (getState() != State.INTERRUPTED) {
+                e.printStackTrace();
                 showErrorDialog(Translator.get("pack_dialog.error_title"), Translator.get("generic_error"),
                         new String[] { OK_TEXT }, new int[] { OK_ACTION });
             }
@@ -133,12 +128,10 @@ public class ArchiveJob extends TransferFileJob {
         String entryRelativePath = filePath.substring(baseFolderPath.length()+1, filePath.length());
 
         Consumer<Optional<Exception>> errorHandler = oe -> {
-            oe.ifPresent(e -> {
-                if (getState() != State.INTERRUPTED) {
-                    e.printStackTrace();
-                }
-            });
             if (oe.isPresent()) {
+                if (getState() != State.INTERRUPTED) {
+                    oe.get().printStackTrace();
+                }
                 // TODO missing async error handling - this only works for synchronious operations
                 int ret = showErrorDialog(Translator.get("pack_dialog.error_title"),
                         Translator.get("error_while_transferring", file.getAbsolutePath()));

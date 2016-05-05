@@ -1,4 +1,4 @@
-package com.mucommander.commons.file.archiver;
+package com.mucommander.commons.file.archiver.sevenzip;
 
 import java.io.IOException;
 import java.io.InputStream;

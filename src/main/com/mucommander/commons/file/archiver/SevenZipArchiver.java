@@ -14,9 +14,13 @@ import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
+import org.apache.commons.io.IOUtils;
 import com.mucommander.commons.file.FileAttributes;
+import com.mucommander.commons.file.archiver.sevenzip.CreateEntryAsyncParameter;
+import com.mucommander.commons.file.archiver.sevenzip.SevenZipJBindingOutStrean;
 import com.mucommander.commons.file.impl.local.LocalFile;
 import com.mucommander.commons.io.BufferedRandomOutputStream;
 import com.mucommander.commons.io.RandomAccessOutputStream;
@@ -25,7 +29,6 @@ import com.mucommander.utils.ThrowingSupplier;
 import net.sf.sevenzipjbinding.IOutCreateArchive7z;
 import net.sf.sevenzipjbinding.IOutCreateCallback;
 import net.sf.sevenzipjbinding.IOutItem7z;
-import net.sf.sevenzipjbinding.IOutStream;
 import net.sf.sevenzipjbinding.ISequentialInStream;
 import net.sf.sevenzipjbinding.SevenZip;
 import net.sf.sevenzipjbinding.SevenZipException;
@@ -35,18 +38,33 @@ import net.sf.sevenzipjbinding.impl.OutItemFactory;
 public class SevenZipArchiver extends Archiver {
 
     private final IOutCreateArchive7z outArchive7z;
-    private final List<CreateEntryAsyncParameter> entries = new ArrayList<>();
-    private ExecutorService executor = Executors.newCachedThreadPool(); // TODO share this executor
-    private Path tempFile;
-    private OutputStream sequentialOut;
 
-    private Object progressLock = new Object();
+    /**
+     * file infos and callbacks for asynchronious operation
+     */
+    private final List<CreateEntryAsyncParameter> entries = new ArrayList<>();
+
+    /**
+     * tempFile for 7z output file - if out stream is sequential
+     */
+    private Path tempFile;
+    /**
+     * original out stream if it is sequential
+     */
+    private OutputStream sequentialOut;
+    /**
+     * random access out stream as needed by SevenZipJBinding - same as instance as {@link Archiver#out}
+     */
+    private RandomAccessOutputStream randomAccessOut;
+
     private long totalWork;
-    private long completedWork;
+    private AtomicLong completedWork = new AtomicLong();
 
     SevenZipArchiver(OutputStream out) throws IOException {
-        super(null);
-        this.out = wrapSequentialOutputStream(out);
+        super(null);// out will be initialized below
+        randomAccessOut = wrapSequentialOutputStream(out);
+        this.out = randomAccessOut;
+
         try {
             outArchive7z = SevenZip.openOutArchive7z();
         } catch (SevenZipException e) {
@@ -63,7 +81,10 @@ public class SevenZipArchiver extends Archiver {
             tempFile = Files.createTempFile("trolCommander-packer", "7z");
             tempFile.toFile().deleteOnExit();
             sequentialOut = outStream;
-            return new BufferedRandomOutputStream(new LocalFile.LocalRandomAccessOutputStream(FileChannel.open(tempFile)));
+            final FileChannel fileChannel = FileChannel.open(tempFile);
+            final LocalFile.LocalRandomAccessOutputStream raos = new LocalFile.LocalRandomAccessOutputStream(
+                    fileChannel);
+            return new BufferedRandomOutputStream(raos);
         }
     }
 
@@ -73,107 +94,62 @@ public class SevenZipArchiver extends Archiver {
             outArchive7z.setLevel(9);
             outArchive7z.setSolid(true);
             outArchive7z.setTrace(false);
-            outArchive7z.setThreadCount(6);
-            outArchive7z.createArchive(new IOutStream() {
+            outArchive7z.setThreadCount(4); // doesn't seem to havemuch performance impact
 
-                @Override
-                public int write(byte[] bytes) throws SevenZipException {
-                    try {
-                        out.write(bytes);
-                    } catch (IOException e) {
-                        throw new SevenZipException(e);
-                    }
-                    return bytes.length;
-                }
-
-                @Override
-                public long seek(long offset, int seekOrigin) throws SevenZipException {
-                    final RandomAccessOutputStream raOut = (RandomAccessOutputStream) out;
-                    long offsetBeginning;
-                    try {
-                        switch (seekOrigin) {
-                            case SEEK_SET:
-                                offsetBeginning = offset;
-                                break;
-                            case SEEK_CUR:
-                                offsetBeginning = raOut.getOffset() + offset;
-                                break;
-                            case SEEK_END:
-                                offsetBeginning = raOut.getLength() + offset;
-                                break;
-                            default:
-                                throw new SevenZipException(
-                                        new IllegalArgumentException("invalid seekOrigin: " + seekOrigin));
-                        }
-                        raOut.seek(offsetBeginning);
-                        return raOut.getOffset();
-                    } catch (IOException e) {
-                        throw new SevenZipException(e);
-                    }
-                }
-
-                @Override
-                public void setSize(long newSize) throws SevenZipException {
-                    final RandomAccessOutputStream raOut = (RandomAccessOutputStream) out;
-                    try {
-                        raOut.setLength(newSize);
-                    } catch (IOException e) {
-                        throw new SevenZipException(e);
-                    }
-                }
-            },
-                    entries.size(),
+            outArchive7z.createArchive(new SevenZipJBindingOutStrean(randomAccessOut), entries.size(),
                     new IOutCreateCallback<IOutItem7z>() {
 
                         private int currentIndex;
 
                         @Override
                         public void setCompleted(long complete) throws SevenZipException {
-//                            synchronized (progressLock) {
-//                                completedWork = complete;
-//                            }
+                            completedWork.set(complete);
                         }
 
                         @Override
                         public void setTotal(long total) throws SevenZipException {
-//                            synchronized (progressLock) {
-//                                totalWork = total;
-//                            }
+                            totalWork = total;
                         }
 
                         @Override
                         public IOutItem7z getItemInformation(int index, OutItemFactory<IOutItem7z> factory)
                                 throws SevenZipException {
                             currentIndex = index;
-                            IOutItem7z outItem = factory.createOutItem();
-                            final CreateEntryAsyncParameter entry = entries.get(index);
-                            
-                            outItem.setPropertyPath(entry.getEntryPath());
-                            
-                            final FileAttributes attributes = entry.getAttributes();
-                            outItem.setPropertyIsDir(attributes.isDirectory());
-                            outItem.setPropertyLastModificationTime(new Date(attributes.getDate()));
-                            outItem.setDataSize(attributes.getSize());
-                            // TODO 7z check all attributes
-                            return outItem;
+
+                            CreateEntryAsyncParameter entry = entries.get(index);
+                            FileAttributes entryAttributes = entry.getAttributes();
+                            String entryPath = entry.getEntryPath();
+
+                            IOutItem7z outItem7z = factory.createOutItem();
+
+                            outItem7z.setPropertyPath(entryPath);
+                            outItem7z.setPropertyIsDir(entryAttributes.isDirectory());
+                            outItem7z.setPropertyLastModificationTime(new Date(entryAttributes.getDate()));
+                            outItem7z.setDataSize(entryAttributes.getSize());
+
+                            return outItem7z;
                         }
 
                         @Override
                         public ISequentialInStream getStream(int index) throws SevenZipException {
                             currentIndex = index;
-                            final CreateEntryAsyncParameter entry = entries.get(index);
+
+                            CreateEntryAsyncParameter entry = entries.get(index);
 
                             Supplier<Boolean> beforeProcessing = entry.getBeforeProcessing();
                             if (beforeProcessing != null && !beforeProcessing.get()) {
                                 throw new SevenZipException("interrupted by user");
                             }
-                            final ThrowingSupplier<InputStream, IOException> entrySourceSupplier = entry
+
+                            ThrowingSupplier<InputStream, IOException> entrySourceSupplier = entry
                                     .getEntrySourceSupplier();
+
                             if (entrySourceSupplier != null) {
-                                InputStream inputStream;
+                                InputStream inputStream = null;
                                 try {
                                     inputStream = entrySourceSupplier.get();
                                 } catch (IOException e) {
+                                    IOUtils.closeQuietly(inputStream);
                                     throw new SevenZipException(e);
                                 }
                                 if (inputStream != null) {
@@ -185,27 +161,30 @@ public class SevenZipArchiver extends Archiver {
 
                         @Override
                         public void setOperationResult(boolean success) throws SevenZipException {
-                            final CreateEntryAsyncParameter entry = entries.get(currentIndex);
-                            Consumer<Optional<Exception>> onProcessingDone = entry.getOnProcessingDone();
-                            if (onProcessingDone != null) {
-                                onProcessingDone.accept(success ? Optional.empty()
-                                        : Optional.of(new SevenZipException("item failed at index: " + currentIndex)));
 
+                            CreateEntryAsyncParameter entry = entries.get(currentIndex);
+                            Consumer<Optional<Exception>> onProcessingDone = entry.getOnProcessingDone();
+
+                            if (onProcessingDone != null) {
+                                final Optional<Exception> result = success
+                                        ? Optional.empty()
+                                        : Optional.of(new SevenZipException("item failed at index: " + currentIndex));
+
+                                onProcessingDone.accept(result);
                             }
                         }
 
-                    });
+                    }); // end craate archive callback
         } catch (SevenZipException e) {
             throw new IOException(e);
         }
 
         return Optional.of(() -> {
-            synchronized (progressLock) {
-                if (totalWork == 0 || completedWork == 0) {
-                    return -1.0F;
-                }
-                return (float) completedWork / totalWork;
+            long completed = completedWork.get();
+            if (totalWork == 0 || completed == 0) {
+                return -1.0F;
             }
+            return (float) completed / totalWork;
         });
     }
 
@@ -214,8 +193,12 @@ public class SevenZipArchiver extends Archiver {
             ThrowingSupplier<InputStream, IOException> entrySourceSupplier,
             Consumer<Optional<Exception>> onProcessingDone) {
 
-        entries.add(new CreateEntryAsyncParameter(entryPath, attributes, beforeProcessing, entrySourceSupplier,
-                onProcessingDone));
+        CreateEntryAsyncParameter entry = new CreateEntryAsyncParameter(entryPath, attributes,
+                beforeProcessing,
+                entrySourceSupplier,
+                onProcessingDone);
+
+        entries.add(entry);
     }
 
     @Override
@@ -236,5 +219,4 @@ public class SevenZipArchiver extends Archiver {
             tempFile.toFile().delete();
         }
     }
-
 }
