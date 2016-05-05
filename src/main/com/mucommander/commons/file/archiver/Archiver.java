@@ -23,13 +23,20 @@ import com.mucommander.commons.file.FileAttributes;
 import com.mucommander.commons.file.FileOperation;
 import com.mucommander.commons.file.UnsupportedFileOperationException;
 import com.mucommander.commons.io.BufferedRandomOutputStream;
+import com.mucommander.commons.io.FileTransferException;
 import com.mucommander.commons.io.RandomAccessOutputStream;
+import com.mucommander.commons.io.StreamUtils;
 import com.mucommander.utils.ThrowingConsumer;
+import com.mucommander.utils.ThrowingSupplier;
 import org.apache.hadoop.io.compress.bzip2.CBZip2OutputStream;
 
 import java.io.BufferedOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.OutputStream;
+import java.util.Optional;
+import java.util.function.Consumer;
+import java.util.function.Supplier;
 import java.util.zip.GZIPOutputStream;
 //import org.apache.tools.bzip2.CBZip2OutputStream;
 
@@ -148,6 +155,8 @@ public abstract class Archiver {
     protected String formatName;
     /** Support output stream for archiving files */
     protected boolean supporStream;
+    /** Lock to avoid closing <code>out</code> while data is being written */
+    protected final Object ioLock = new Object();
     
     /**
      * Creates a new Archiver.
@@ -426,39 +435,97 @@ public abstract class Archiver {
 
     /**
      * Starts actual creation of entries previously scheduled with
-     * {@link #createEntryAsync(String, FileAttributes, Runnable, ThrowingConsumer)}.
+     * {@link #createEntryAsync(String, FileAttributes, Supplier, ThrowingSupplier, Consumer)}.
      * 
+     * @return if the archiver supports it a supplier for the percentage of total work that is already done.
      * @throws IOException
      */
-    public void startAsyncEntriesCreation() throws IOException {
+    public Optional<Supplier<Float>> startAsyncEntriesCreation() throws IOException {
         // default implementation is synchronious - so nothing to to here
+        return null;
     }
 
     /**
-     * Asynchronious version of {@link #createEntry(String, FileAttributes)} - see there for details.
+     * Creates a new entry in the archive using the given relative path and file attributes.
      * 
-     * @param beforeProcessing
+     * <p>
+     * Actual processing can be synchronious or asynchronious depending on the concrete Archiver implementation. There
+     * is no guarantee that anything is done before {@link #startAsyncEntriesCreation()} is called and there is also no
+     * guarantee that it everything is only done after <code>startAsyncEntriesCreation()</code> is called. Callers
+     * should not make any assumptions about the synchronious or asynchronious operation of the archiver. The default
+     * implementation runs synchroniously but callers must not rely on this.The default implementation retrieves an
+     * OutputStream from {@link #createEntry(String, FileAttributes)} and if the entry is a regular file (not a
+     * directory) then the InputStream privided by <code>entrySourceSupplier</code> will be copied into this
+     * OutputStream. Archivers only supporting asynchronious operation should override this method.
+     * </p>
+     *
+     * <p>
+     * Be aware that this default implementation acquires a lock on this archiver instance while processing this entries
+     * content.
+     * </p>
+     *
+     * <p>
+     * If this Archiver uses a single entry format, the specified path and file won't be used at all. Also in this case,
+     * this method must be invoked only once (single entry), it will throw an IOException if invoked more than once.
+     * </p>
+     *
+     * @param entryPath the path to be used to create the entry in the archive. This parameter is simply ignored if the
+     *            archive is a single entry format.
+     * @param attributes used to determine whether the entry is a directory or regular file, and to retrieve its date,
+     *            size and permissions
+     * @param beforeProcessing an optional callback that will be run before the main processing for this entry is
+     *            started. This could be used to update status imformation for the user.
+     * @param entrySourceSupplier must provide an InputStream to the content of a regular file that should be saved with
+     *            this entry.
+     * @param onProcessingDone will be called when processing this entry has been completed. If this Archiver failed to
+     *            write the entry, or in the case of a single entry archiver, if this method was called more than once,
+     *            then an {@link Exception} will be passed to this Consumer.
      */
-    public void createEntryAsync(String entryPath, FileAttributes attributes,
-            Runnable beforeProcessing, ThrowingConsumer<OutputStream, IOException> entryContentWriter)
-            throws IOException {
+    public void createEntryAsync(String entryPath, FileAttributes attributes, Supplier<Boolean> beforeProcessing,
+            ThrowingSupplier<InputStream, IOException> entrySourceSupplier,
+            Consumer<Optional<Exception>> onProcessingDone) {
 
-        if (beforeProcessing != null) {
-            beforeProcessing.run();
+        Optional<Exception> exception = Optional.empty();
+        try {
+            if (entrySourceSupplier == null) {
+                createEntry(entryPath, attributes);
+            } else {
+                try (InputStream inputStream = entrySourceSupplier.get()) {
+                    if (beforeProcessing == null || beforeProcessing.get()) {
+                        final OutputStream outputStream = createEntry(entryPath, attributes);
+
+                        if (outputStream != null) {
+                            if (inputStream != null) {
+                                /*
+                                 * Synchronize this block to ensure that Archiver.close() is not closed while data is
+                                 * still being written to the archive OutputStream, this would cause e.g.
+                                 * ZipOutputStream to deadlock.
+                                 */
+                                synchronized (this) {
+                                    StreamUtils.copyStream(inputStream, outputStream);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (Exception e) {
+            exception = Optional.of(e);
         }
-
-        final OutputStream oStream = createEntry(entryPath, attributes);
-
-        if (entryContentWriter != null) {
-            entryContentWriter.accept(oStream);
+        if (onProcessingDone != null) {
+            onProcessingDone.accept(exception);
         }
     }
 
     /**
      * Creates a new entry in the archive using the given relative path and file attributes, and returns an
-     * <code>OutputStream</code> to write the entry's contents. The specified file attributes are used to determine
-     * whether the entry is a directory or a regular file, and to set the entry's size, permissions and date.
+     * <code>OutputStream</code> to write the entry's contents if each entry can synchroniously be packed. If this
+     * archiver only supports asynchronious operation, then the synchronious default implementation of
+     * {@link #createEntryAsync(String, FileAttributes, Runnable, ThrowingSupplier)} must be overidden instead.
      * 
+     * The specified file attributes are used to determine whether the entry is a directory or a regular file, and to
+     * set the entry's size, permissions and date.
+     *
      * <p>
      * If the entry is a regular file (not a directory), an OutputStream which can be used to write the contents of the
      * entry will be returned, <code>null</code> otherwise. The OutputStream <b>must not</b> be closed once it has been
@@ -476,10 +543,11 @@ public abstract class Archiver {
      * @param attributes used to determine whether the entry is a directory or regular file, and to retrieve its date
      *            and size
      * @return <code>OutputStream</code> to write the entry's contents.
-     * @throws IOException if this Archiver failed to write the entry, or in the case of a single entry archiver, if
-     *             this method was called more than once.
+     * @throws Exception if this Archiver failed to write the entry, or in the case of a single entry archiver, if this
+     *             method was called more than once. (Exception rather than IOException as ZipOutputStream has been seen
+     *             throwing NullPointerException.)
      */
-    protected abstract OutputStream createEntry(String entryPath, FileAttributes attributes) throws IOException;
+    protected abstract OutputStream createEntry(String entryPath, FileAttributes attributes) throws Exception;
 
 
     /**
@@ -511,8 +579,12 @@ public abstract class Archiver {
     public abstract void postProcess() throws IOException;
     
     /**
-     * Closes the underlying OuputStream and ressources used by this Archiver to write the archive. This method
-     * must be called when all entries have been added to the archive.
+     * Closes the underlying OuputStream and ressources used by this Archiver to write the archive. This method must be
+     * called when all entries have been added to the archive.
+     * <p>
+     * If the archiver could deadlock when closed while still processing entries a lock on this archiver should be
+     * acquired.
+     * </p>
      */
     public abstract void close() throws IOException;
 }

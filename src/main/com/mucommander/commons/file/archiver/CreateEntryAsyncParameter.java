@@ -1,22 +1,28 @@
 package com.mucommander.commons.file.archiver;
 
 import java.io.IOException;
-import java.io.OutputStream;
+import java.io.InputStream;
+import java.util.Optional;
+import java.util.function.Consumer;
+import java.util.function.Supplier;
 import com.mucommander.commons.file.FileAttributes;
-import com.mucommander.utils.ThrowingConsumer;
+import com.mucommander.utils.ThrowingSupplier;
 
 public class CreateEntryAsyncParameter {
     private String entryPath;
     private FileAttributes attributes;
-    private Runnable beforeProcessing;
-    private ThrowingConsumer<OutputStream, IOException> entryContentWriter;
+    private Supplier<Boolean> beforeProcessing;
+    private ThrowingSupplier<InputStream, IOException> entrySourceSupplier;
+    private Consumer<Optional<Exception>> onProcessingDone;
 
-    public CreateEntryAsyncParameter(String entryPath, FileAttributes attributes, Runnable beforeProcessing,
-            ThrowingConsumer<OutputStream, IOException> entryContentWriter) {
+    public CreateEntryAsyncParameter(String entryPath, FileAttributes attributes, Supplier<Boolean> beforeProcessing,
+            ThrowingSupplier<InputStream, IOException> entrySourceSupplier,
+            Consumer<Optional<Exception>> onProcessingDone) {
         this.entryPath = entryPath;
         this.attributes = attributes;
         this.beforeProcessing = beforeProcessing;
-        this.entryContentWriter = entryContentWriter;
+        this.setEntrySourceSupplier(entrySourceSupplier);
+        this.setOnProcessingDone(onProcessingDone);
     }
     public String getEntryPath() {
         return entryPath;
@@ -30,16 +36,22 @@ public class CreateEntryAsyncParameter {
     public void setAttributes(FileAttributes attributes) {
         this.attributes = attributes;
     }
-    public Runnable getBeforeProcessing() {
+    public Supplier<Boolean> getBeforeProcessing() {
         return beforeProcessing;
     }
-    public void setBeforeProcessing(Runnable beforeProcessing) {
+    public void setBeforeProcessing(Supplier<Boolean> beforeProcessing) {
         this.beforeProcessing = beforeProcessing;
     }
-    public ThrowingConsumer<OutputStream, IOException> getEntryContentWriter() {
-        return entryContentWriter;
+    public ThrowingSupplier<InputStream, IOException> getEntrySourceSupplier() {
+        return entrySourceSupplier;
     }
-    public void setEntryContentWriter(ThrowingConsumer<OutputStream, IOException> entryContentWriter) {
-        this.entryContentWriter = entryContentWriter;
+    public void setEntrySourceSupplier(ThrowingSupplier<InputStream, IOException> entrySourceSupplier) {
+        this.entrySourceSupplier = entrySourceSupplier;
+    }
+    public Consumer<Optional<Exception>> getOnProcessingDone() {
+        return onProcessingDone;
+    }
+    public void setOnProcessingDone(Consumer<Optional<Exception>> onProcessingDone) {
+        this.onProcessingDone = onProcessingDone;
     }
 }

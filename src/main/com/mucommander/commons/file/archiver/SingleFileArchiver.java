@@ -59,7 +59,7 @@ class SingleFileArchiver extends Archiver {
 	
 	
     @Override
-    public void close() throws IOException {
+    public synchronized void close() throws IOException {
         out.close();
     }
 

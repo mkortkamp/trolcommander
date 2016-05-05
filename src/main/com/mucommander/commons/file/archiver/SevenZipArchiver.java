@@ -1,25 +1,25 @@
 package com.mucommander.commons.file.archiver;
 
-import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
 import java.io.FileInputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.OutputStream;
-import java.io.PipedInputStream;
-import java.io.PipedOutputStream;
 import java.nio.channels.FileChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.function.Consumer;
+import java.util.function.Supplier;
 import com.mucommander.commons.file.FileAttributes;
 import com.mucommander.commons.file.impl.local.LocalFile;
 import com.mucommander.commons.io.RandomAccessOutputStream;
 import com.mucommander.commons.io.StreamUtils;
-import com.mucommander.utils.ThrowingConsumer;
+import com.mucommander.utils.ThrowingSupplier;
 import net.sf.sevenzipjbinding.IOutCreateArchive7z;
 import net.sf.sevenzipjbinding.IOutCreateCallback;
 import net.sf.sevenzipjbinding.IOutItem7z;
@@ -37,6 +37,10 @@ public class SevenZipArchiver extends Archiver {
     private ExecutorService executor = Executors.newCachedThreadPool(); // TODO share this executor
     private Path tempFile;
     private OutputStream sequentialOut;
+
+    private Object progressLock = new Object();
+    private long totalWork;
+    private long completedWork;
 
     SevenZipArchiver(OutputStream out) throws IOException {
         super(null);
@@ -60,7 +64,7 @@ public class SevenZipArchiver extends Archiver {
     }
 
     @Override
-    public void startAsyncEntriesCreation() throws IOException {
+    public Optional<Supplier<Float>> startAsyncEntriesCreation() throws IOException {
         try {
             outArchive7z.setLevel(9);
             outArchive7z.setTrace(true);
@@ -118,15 +122,17 @@ public class SevenZipArchiver extends Archiver {
                         private int currentIndex;
 
                         @Override
-                        public void setCompleted(long arg0) throws SevenZipException {
-                            // TODO Auto-generated method stub
-
+                        public void setCompleted(long complete) throws SevenZipException {
+                            synchronized (progressLock) {
+                                completedWork = complete;
+                            }
                         }
 
                         @Override
-                        public void setTotal(long arg0) throws SevenZipException {
-                            // TODO Auto-generated method stub
-
+                        public void setTotal(long total) throws SevenZipException {
+                            synchronized (progressLock) {
+                                totalWork = total;
+                            }
                         }
 
                         @Override
@@ -151,42 +157,59 @@ public class SevenZipArchiver extends Archiver {
                             currentIndex = index;
                             final CreateEntryAsyncParameter entry = entries.get(index);
 
-                            Runnable beforeProcessing = entry.getBeforeProcessing();
-                            if (beforeProcessing != null) {
-                                beforeProcessing.run();
+                            Supplier<Boolean> beforeProcessing = entry.getBeforeProcessing();
+                            if (beforeProcessing != null && !beforeProcessing.get()) {
+                                throw new SevenZipException("interrupted by user");
                             }
-                            final ThrowingConsumer<OutputStream, IOException> entryContentWriter = entry
-                                    .getEntryContentWriter();
-                            if (entryContentWriter != null) {
-
-                                ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
+                            final ThrowingSupplier<InputStream, IOException> entrySourceSupplier = entry
+                                    .getEntrySourceSupplier();
+                            if (entrySourceSupplier != null) {
+                                InputStream inputStream;
                                 try {
-                                    entryContentWriter.accept(byteArrayOutputStream);
-                                } catch (IOException e1) {
-                                    throw new SevenZipException(e1);
+                                    inputStream = entrySourceSupplier.get();
+                                } catch (IOException e) {
+                                    throw new SevenZipException(e);
                                 }
-                                return new InputStreamSequentialInStream(
-                                        new ByteArrayInputStream(byteArrayOutputStream.toByteArray()));
+                                if (inputStream != null) {
+                                    return new InputStreamSequentialInStream(inputStream);
+                                }
                             }
                             return null;
                         }
 
                         @Override
-                        public void setOperationResult(boolean result) throws SevenZipException {
-                            // TODO 7z exceptionhandling
+                        public void setOperationResult(boolean success) throws SevenZipException {
+                            final CreateEntryAsyncParameter entry = entries.get(currentIndex);
+                            Consumer<Optional<Exception>> onProcessingDone = entry.getOnProcessingDone();
+                            if (onProcessingDone != null) {
+                                onProcessingDone.accept(success ? Optional.empty()
+                                        : Optional.of(new SevenZipException("item failed at index: " + currentIndex)));
+
+                            }
                         }
 
                     });
         } catch (SevenZipException e) {
             throw new IOException(e);
         }
+
+        return Optional.of(() -> {
+            synchronized (progressLock) {
+                if (totalWork == 0 || completedWork == 0) {
+                    return -1.0F;
+                }
+                return (float) completedWork / totalWork;
+            }
+        });
     }
 
     @Override
-    public void createEntryAsync(String entryPath, FileAttributes attributes, Runnable beforeProcessing,
-            ThrowingConsumer<OutputStream, IOException> entryContentWriter) throws IOException {
+    public void createEntryAsync(String entryPath, FileAttributes attributes, Supplier<Boolean> beforeProcessing,
+            ThrowingSupplier<InputStream, IOException> entrySourceSupplier,
+            Consumer<Optional<Exception>> onProcessingDone) {
 
-        entries.add(new CreateEntryAsyncParameter(entryPath, attributes, beforeProcessing, entryContentWriter));
+        entries.add(new CreateEntryAsyncParameter(entryPath, attributes, beforeProcessing, entrySourceSupplier,
+                onProcessingDone));
     }
 
     @Override
@@ -196,7 +219,7 @@ public class SevenZipArchiver extends Archiver {
 
     @Override
     public void postProcess() throws IOException {
-        // nowhere used
+        // not used with z-zip
     }
 
     @Override

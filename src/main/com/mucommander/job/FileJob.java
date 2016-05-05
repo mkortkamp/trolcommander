@@ -21,7 +21,9 @@ package com.mucommander.job;
 
 import java.io.IOException;
 import java.util.WeakHashMap;
+import java.util.concurrent.Callable;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -839,6 +841,7 @@ public abstract class FileJob implements Runnable {
                         // Change current file and advance file index
                         currentFileIndex = fileIndex;
                         nextFile(currentFile);
+                        return getState() != State.INTERRUPTED;
                     },
                     success -> {// after processing
                         if (getState() != State.INTERRUPTED) {
@@ -857,19 +860,15 @@ public abstract class FileJob implements Runnable {
         }
         try {
             startAsyncFileProcessing();
+            stop();
             if (getState() != State.INTERRUPTED) {
 
-                // If last file was reached without any user interruption, all files have been processed
-                // with or
+                // If last file was reached without any user interruption, all files have been processed with or
                 // without errors, switch to FINISHED state and notify listeners
                 currentFileIndex++;
-                stop();
                 jobCompleted();
                 setState(State.FINISHED);
             }
-        } catch (IOException e) {
-            // TODO Auto-generated catch block
-            e.printStackTrace();
         } finally {
             // Refresh tables's current folders, based on the job's refresh policy.
             refreshTables();
@@ -880,14 +879,16 @@ public abstract class FileJob implements Runnable {
      * Asynchronious version of {@link #processFile(AbstractFile, Object)} - see there for details.
      * <code>onProcessingDone</code>> must be called when all processing has actually completed.
      */
-    protected void processFileAsync(AbstractFile file, Object recurseParams, Runnable beforeProcessing,
+    protected void processFileAsync(AbstractFile file, Object recurseParams, Supplier<Boolean> beforeProcessing,
             Consumer<Boolean> onProcessingDone) {
-        if (beforeProcessing != null) {
-            beforeProcessing.run();
-        }
-        boolean success = processFile(file, recurseParams);
-        if (onProcessingDone != null) {
-            onProcessingDone.accept(success);
+
+        if (beforeProcessing == null || beforeProcessing.get()) {
+            boolean success = processFile(file, recurseParams);
+            if (onProcessingDone != null) {
+                onProcessingDone.accept(success);
+            }
+        } else {
+            onProcessingDone.accept(false);
         }
     }
 
@@ -895,9 +896,8 @@ public abstract class FileJob implements Runnable {
      * Actially starts processing files previously scheduled with
      * {@link #processFileAsync(AbstractFile, Object, Runnable, Consumer)}
      * 
-     * @throws IOException
      */
-    protected void startAsyncFileProcessing() throws IOException {
+    protected void startAsyncFileProcessing() {
         // default implementation is synchronious - so nothing to here
     }
 

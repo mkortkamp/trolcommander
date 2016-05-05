@@ -84,7 +84,7 @@ class TarArchiver extends Archiver {
 
 
     @Override
-    public void close() throws IOException {
+    public synchronized void close() throws IOException {
         // Close current entry
         if(!firstEntry)
             tos.closeEntry();
